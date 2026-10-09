@@ -1,0 +1,8 @@
+{
+  "name": "Remix Epiciclos de Fourier",
+  "description": "Visualizador interactivo de epiciclos de Fourier para descomposición de trayectorias geométricas y trazos personalizados con soporte para exportación en alta definición.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

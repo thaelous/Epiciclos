@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Multi-frequency turbulence for organic parchment fibers -->
+    <filter id="parchmentNoise" x="0%" y="0%" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="5" result="noise" />
+      <feColorMatrix type="matrix" values="0.3 0 0 0 0.85   0 0.25 0 0 0.75   0 0 0.15 0 0.58   0 0 0 0.35 0" result="coloredNoise" />
+      <feBlend mode="multiply" in="SourceGraphic" in2="coloredNoise" />
+    </filter>
+
+    <!-- Charred burn radial vignette -->
+    <radialGradient id="burnedEdgeGrad" cx="50%" cy="50%" r="72%">
+      <stop offset="0%" stop-color="#f5e6cc" stop-opacity="1" />
+      <stop offset="35%" stop-color="#ebd2a9" stop-opacity="1" />
+      <stop offset="65%" stop-color="#ddbe92" stop-opacity="1" />
+      <stop offset="82%" stop-color="#b6834c" stop-opacity="1" />
+      <stop offset="92%" stop-color="#64320d" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#1f0902" stop-opacity="1" />
+    </radialGradient>
+
+    <!-- Burnt scorch stains -->
+    <radialGradient id="scorchSpot" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#2d1204" stop-opacity="0.45" />
+      <stop offset="60%" stop-color="#6a350c" stop-opacity="0.2" />
+      <stop offset="100%" stop-color="#6a350c" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- Parchment Base with Charred Edges -->
+  <rect width="1024" height="1024" fill="url(#burnedEdgeGrad)" filter="url(#parchmentNoise)" />
+
+  <!-- Organic charred marks along perimeter -->
+  <ellipse cx="120" cy="180" rx="140" ry="90" fill="url(#scorchSpot)" transform="rotate(-15 120 180)" />
+  <ellipse cx="880" cy="220" rx="160" ry="110" fill="url(#scorchSpot)" transform="rotate(25 880 220)" />
+  <ellipse cx="160" cy="840" rx="150" ry="120" fill="url(#scorchSpot)" transform="rotate(35 160 840)" />
+  <ellipse cx="860" cy="800" rx="170" ry="100" fill="url(#scorchSpot)" transform="rotate(-20 860 800)" />
+  <ellipse cx="512" cy="70" rx="220" ry="60" fill="url(#scorchSpot)" />
+  <ellipse cx="512" cy="960" rx="240" ry="70" fill="url(#scorchSpot)" />
+</svg>
