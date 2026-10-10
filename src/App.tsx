@@ -529,6 +529,13 @@ export default function App() {
     mediaRecorder: null as MediaRecorder | null,
     recordedChunks: [] as Blob[],
     exportAspect: '9:16' as ExportAspect,
+    exportFraming: null as {
+      isTracking: boolean;
+      scale: number;
+      panX: number;
+      panY: number;
+      bounds?: { minX: number; maxX: number; minY: number; maxY: number };
+    } | null,
     prevVx: 0,
     prevVy: 0,
     themeTransitionProgress: 1.0,
@@ -1482,6 +1489,84 @@ export default function App() {
     }
   }, [compute, exitDraw]);
 
+  // Calcula el encuadre inteligente para exportación HD (Caso A: Vista General / Centrado Completo)
+  const computeSmartExportFraming = (
+    fourier: FourierComponent[],
+    maxCircles: number,
+    targetWidth: number,
+    targetHeight: number,
+    paddingPercent: number = 0.125
+  ) => {
+    const total = Math.min(fourier.length, maxCircles);
+    if (total === 0) {
+      return {
+        scale: 1,
+        panX: targetWidth / 2,
+        panY: targetHeight / 2,
+        bounds: { minX: -150, maxX: 150, minY: -150, maxY: 150 },
+      };
+    }
+
+    // Muestreo paramétrico de alta densidad en el ciclo [0, 2π]
+    // Mide la caja delimitadora que abarca la trayectoria y la amplitud máxima de los círculos giratorios
+    const SAMPLES = 480;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (let s = 0; s < SAMPLES; s++) {
+      const t = (s * 2 * Math.PI) / SAMPLES;
+      let cx = 0;
+      let cy = 0;
+
+      for (let i = 0; i < total; i++) {
+        const prevX = cx;
+        const prevY = cy;
+        const comp = fourier[i];
+        const angle = comp.freq * t + comp.phase;
+        const r = comp.amp;
+        cx += r * Math.cos(angle);
+        cy += r * Math.sin(angle);
+
+        // Amplitud espacial del círculo i centrado en (prevX, prevY) con radio r
+        if (prevX - r < minX) minX = prevX - r;
+        if (prevX + r > maxX) maxX = prevX + r;
+        if (prevY - r < minY) minY = prevY - r;
+        if (prevY + r > maxY) maxY = prevY + r;
+      }
+
+      // Punta trazadora generatriz
+      if (cx < minX) minX = cx;
+      if (cx > maxX) maxX = cx;
+      if (cy < minY) minY = cy;
+      if (cy > maxY) maxY = cy;
+    }
+
+    const boxW = Math.max(maxX - minX, 1);
+    const boxH = Math.max(maxY - minY, 1);
+    const midX = (minX + maxX) / 2;
+    const midY = (minY + maxY) / 2;
+
+    // Margen de seguridad del 10% al 15% (12.5% por defecto)
+    const clampedPadding = Math.min(Math.max(paddingPercent, 0.10), 0.15);
+    const usableW = targetWidth * (1 - clampedPadding);
+    const usableH = targetHeight * (1 - clampedPadding);
+
+    const scale = Math.min(usableW / boxW, usableH / boxH);
+
+    // Centrado exacto del punto medio geométrico en (540, 960) para 1080x1920
+    const panX = targetWidth / 2 - midX * scale;
+    const panY = targetHeight / 2 - midY * scale;
+
+    return {
+      scale,
+      panX,
+      panY,
+      bounds: { minX, maxX, minY, maxY },
+    };
+  };
+
   // Render HD / 4K Video Frame with active aspect ratio and effects
   const renderHDFrame = (c: ThemeColors) => {
     const hdCanvas = hdCanvasRef.current;
@@ -1509,22 +1594,55 @@ export default function App() {
 
     if (s.fourierFiltered.length === 0) return;
 
-    const hdScaleFactor =
-      Math.min(hdCanvas.width, hdCanvas.height) /
-      Math.min(canvas.width, canvas.height);
-    const hdEffectiveScale = s.scale * hdScaleFactor;
     const hdCenterX = hdCanvas.width / 2;
     const hdCenterY = hdCanvas.height / 2;
+    const total = Math.min(s.fourierFiltered.length, s.maxCircles);
 
-    let panHDX = hdCenterX;
-    let panHDY = hdCenterY;
+    // Calcular posición instantánea de la punta trazadora en el mundo
+    let tipWorldX = 0;
+    let tipWorldY = 0;
+    for (let i = 0; i < total; i++) {
+      const angle = s.fourierFiltered[i].freq * s.time + s.fourierFiltered[i].phase;
+      tipWorldX += s.fourierFiltered[i].amp * Math.cos(angle);
+      tipWorldY += s.fourierFiltered[i].amp * Math.sin(angle);
+    }
 
-    if (s.isTracking) {
-      panHDX = hdCenterX - s.currentTipWorld.x * hdEffectiveScale;
-      panHDY = hdCenterY - s.currentTipWorld.y * hdEffectiveScale;
+    const isTrackingExport = s.exportFraming ? s.exportFraming.isTracking : s.isTracking;
+
+    let hdEffectiveScale: number;
+    let panHDX: number;
+    let panHDY: number;
+
+    if (!isTrackingExport) {
+      // Caso A: Seguimiento DESACTIVADO (Modo Vista General / Centrado Completo)
+      // Ajuste inteligente: toda la trayectoria y la amplitud máxima de los círculos
+      // caben enteros con margen de seguridad del 12-15%, centrados en (540, 960).
+      if (s.exportFraming && !s.exportFraming.isTracking) {
+        hdEffectiveScale = s.exportFraming.scale;
+        panHDX = s.exportFraming.panX;
+        panHDY = s.exportFraming.panY;
+      } else {
+        const smart = computeSmartExportFraming(
+          s.fourierFiltered,
+          s.maxCircles,
+          hdCanvas.width,
+          hdCanvas.height,
+          0.125
+        );
+        hdEffectiveScale = smart.scale;
+        panHDX = smart.panX;
+        panHDY = smart.panY;
+      }
     } else {
-      panHDX = hdCenterX + (s.panX - canvas.width / 2) * hdScaleFactor;
-      panHDY = hdCenterY + (s.panY - canvas.height / 2) * hdScaleFactor;
+      // Caso B: Seguimiento ACTIVADO (Modo Macro / Zoom de Usuario)
+      // El video refleja exactamente el zoom y encuadre del usuario en pantalla,
+      // escalando proporcionalmente al lienzo HD y siguiendo la punta trazadora en tiempo real.
+      const hdScaleFactor =
+        Math.min(hdCanvas.width, hdCanvas.height) /
+        Math.min(canvas.width, canvas.height);
+      hdEffectiveScale = s.scale * hdScaleFactor;
+      panHDX = hdCenterX - tipWorldX * hdEffectiveScale;
+      panHDY = hdCenterY - tipWorldY * hdEffectiveScale;
     }
 
     hdCtx.save();
@@ -1550,7 +1668,6 @@ export default function App() {
     let vx = 0;
     let vy = 0;
     let vRefSum = 0;
-    const total = Math.min(s.fourierFiltered.length, s.maxCircles);
 
     for (let i = 0; i < total; i++) {
       const prevx = x;
@@ -1968,11 +2085,70 @@ export default function App() {
       }, 100);
 
       s.isRecordingWallpaper = false;
+      s.exportFraming = null;
       setIsRecording(false);
       setRecordProgress(0);
       setExportModalOpen(false);
       alert(`¡Video HD (${exportAspect}) descargado con sincronización de bucle perfecta!`);
     };
+
+    // Configuración de encuadre inteligente según el estado actual de la pantalla
+    const canvas = canvasRef.current;
+    const scrW = canvas ? canvas.width : 400;
+    const scrH = canvas ? canvas.height : 400;
+
+    if (!s.isTracking) {
+      // Caso A: Modo Vista General / Centrado Completo
+      // Calcula la caja delimitadora que abarca la trayectoria y la amplitud máxima de los círculos
+      // con margen de seguridad del 12.5% y centra el punto medio exactamente en (hdCanvas.width/2, hdCanvas.height/2)
+      const smartFraming = computeSmartExportFraming(
+        s.fourierFiltered,
+        s.maxCircles,
+        hdCanvas.width,
+        hdCanvas.height,
+        0.125
+      );
+      s.exportFraming = {
+        isTracking: false,
+        scale: smartFraming.scale,
+        panX: smartFraming.panX,
+        panY: smartFraming.panY,
+        bounds: smartFraming.bounds,
+      };
+    } else {
+      // Caso B: Seguimiento ACTIVADO (Modo Macro / Zoom de Usuario)
+      // Transfiere el zoom del usuario (`scale`) escalando proporcionalmente al lienzo HD
+      const hdScaleFactor = Math.min(hdCanvas.width, hdCanvas.height) / Math.min(scrW, scrH);
+      s.exportFraming = {
+        isTracking: true,
+        scale: s.scale * hdScaleFactor,
+        panX: hdCanvas.width / 2,
+        panY: hdCanvas.height / 2,
+      };
+    }
+
+    // Modo Sombra: Pre-calcular la huella fantasma completa si está activado
+    // para que la memoria estática sea visible desde el cuadro inicial
+    if (s.shadowMode && s.fourierFiltered.length > 0) {
+      const ghostPts: Point[] = [];
+      const total = Math.min(s.fourierFiltered.length, s.maxCircles);
+      const ghostSteps = 360;
+      for (let st = 0; st <= ghostSteps; st++) {
+        const tVal = (st * 2 * Math.PI) / ghostSteps;
+        let px = 0;
+        let py = 0;
+        for (let k = 0; k < total; k++) {
+          const a = s.fourierFiltered[k].freq * tVal + s.fourierFiltered[k].phase;
+          px += s.fourierFiltered[k].amp * Math.cos(a);
+          py += s.fourierFiltered[k].amp * Math.sin(a);
+        }
+        ghostPts.push({ x: px, y: py });
+      }
+      s.hdShadowPath = ghostPts;
+      if (s.shadowPath.length === 0) {
+        s.shadowPath = ghostPts;
+      }
+    }
 
     // Reset exactly to t = 0 for perfect loop
     s.time = 0;
@@ -2716,8 +2892,11 @@ export default function App() {
           renderHDFrame(c);
         }
 
-        if (s.speed > 0) {
-          const dt = ((2 * Math.PI) / 300) * s.speed;
+        if (s.speed > 0 || s.isRecordingWallpaper) {
+          // Bucle exacto a 60 FPS: 360 cuadros por ciclo completo (2π)
+          const dt = s.isRecordingWallpaper
+            ? (2 * Math.PI) / 360
+            : ((2 * Math.PI) / 300) * s.speed;
           s.time += dt;
 
           if (s.isRecordingWallpaper) {
@@ -2731,6 +2910,8 @@ export default function App() {
               s.mediaRecorder &&
               s.mediaRecorder.state === 'recording'
             ) {
+              s.time = 2 * Math.PI;
+              renderHDFrame(c);
               s.mediaRecorder.stop();
             }
             if (s.shadowMode) {
@@ -3539,6 +3720,62 @@ export default function App() {
                 <span className="aspect-label">Cuadrado 1:1</span>
                 <span className="aspect-sub">1080 × 1080</span>
               </button>
+            </div>
+
+            {/* Indicador de Encuadre Inteligente Adaptativo */}
+            <div
+              style={{
+                margin: '12px 0 6px',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                background: 'rgba(2, 132, 199, 0.08)',
+                border: '1px solid rgba(2, 132, 199, 0.25)',
+                fontSize: '0.78rem',
+                lineHeight: 1.45,
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <span>🎯</span>
+                  <span>Encuadre Inteligente HD</span>
+                </span>
+                <button
+                  onClick={() => {
+                    const next = !isTracking;
+                    setIsTracking(next);
+                    stateRef.current.isTracking = next;
+                  }}
+                  disabled={isRecording}
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    background: isTracking ? '#e11d48' : '#0284c7',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                  }}
+                >
+                  {isTracking ? 'Cambiar a Centrado' : 'Cambiar a Seguimiento'}
+                </button>
+              </div>
+              {isTracking ? (
+                <div>
+                  <b style={{ color: '#e11d48' }}>Caso B: Seguimiento Activo (Macro / Zoom de Pantalla)</b>
+                  <div style={{ color: 'var(--subtext)', marginTop: '2px' }}>
+                    La cámara HD seguirá en tiempo real la punta trazadora en (540, 960) reflejando exactamente tu nivel de zoom actual ({Math.round(stateRef.current.scale * 100)}%).
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <b style={{ color: '#0284c7' }}>Caso A: Vista General (Auto-Centrado Completo)</b>
+                  <div style={{ color: 'var(--subtext)', marginTop: '2px' }}>
+                    Cálculo automático de caja delimitadora (Bounding Box) con 12.5% de margen. La figura entera y todos los círculos cabrán perfectamente centrados en (540, 960) sin recortes.
+                  </div>
+                </div>
+              )}
             </div>
 
             {isRecording && (
