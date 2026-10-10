@@ -529,6 +529,8 @@ export default function App() {
     mediaRecorder: null as MediaRecorder | null,
     recordedChunks: [] as Blob[],
     exportAspect: '9:16' as ExportAspect,
+    recTotalFrames: 1200 as number,
+    prevRecordTime: 0 as number,
     exportFraming: null as {
       isTracking: boolean;
       scale: number;
@@ -1495,7 +1497,7 @@ export default function App() {
     maxCircles: number,
     targetWidth: number,
     targetHeight: number,
-    paddingPercent: number = 0.125
+    paddingPercent: number = 0.12
   ) => {
     const total = Math.min(fourier.length, maxCircles);
     if (total === 0) {
@@ -1514,6 +1516,13 @@ export default function App() {
     let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
+
+    // Abarcar el radio del círculo mayor para evitar cualquier recorte en el origen
+    const maxRadius = total > 0 ? fourier[0].amp : 0;
+    minX = Math.min(minX, -maxRadius);
+    maxX = Math.max(maxX, maxRadius);
+    minY = Math.min(minY, -maxRadius);
+    maxY = Math.max(maxY, maxRadius);
 
     for (let s = 0; s < SAMPLES; s++) {
       const t = (s * 2 * Math.PI) / SAMPLES;
@@ -1536,7 +1545,7 @@ export default function App() {
         if (prevY + r > maxY) maxY = prevY + r;
       }
 
-      // Punta trazadora generatriz
+      // Punta trazadora generatriz de la silueta completa
       if (cx < minX) minX = cx;
       if (cx > maxX) maxX = cx;
       if (cy < minY) minY = cy;
@@ -1548,14 +1557,14 @@ export default function App() {
     const midX = (minX + maxX) / 2;
     const midY = (minY + maxY) / 2;
 
-    // Margen de seguridad del 10% al 15% (12.5% por defecto)
+    // Margen de seguridad del 12% exacto según especificación
     const clampedPadding = Math.min(Math.max(paddingPercent, 0.10), 0.15);
     const usableW = targetWidth * (1 - clampedPadding);
     const usableH = targetHeight * (1 - clampedPadding);
 
     const scale = Math.min(usableW / boxW, usableH / boxH);
 
-    // Centrado exacto del punto medio geométrico en (540, 960) para 1080x1920
+    // Centrado exacto del punto medio geométrico en (540, 960) para 1080x1920 (targetWidth/2, targetHeight/2)
     const panX = targetWidth / 2 - midX * scale;
     const panY = targetHeight / 2 - midY * scale;
 
@@ -1574,6 +1583,12 @@ export default function App() {
     if (!hdCanvas || !canvas) return;
     const hdCtx = hdCanvas.getContext('2d');
     if (!hdCtx) return;
+
+    // Suavizado vectorial de bordes y remates de calidad de estudio profesional
+    hdCtx.imageSmoothingEnabled = true;
+    hdCtx.imageSmoothingQuality = 'high';
+    hdCtx.lineCap = 'round';
+    hdCtx.lineJoin = 'round';
 
     const s = stateRef.current;
     const isBurned = s.currentTheme === 'burned';
@@ -1616,7 +1631,7 @@ export default function App() {
     if (!isTrackingExport) {
       // Caso A: Seguimiento DESACTIVADO (Modo Vista General / Centrado Completo)
       // Ajuste inteligente: toda la trayectoria y la amplitud máxima de los círculos
-      // caben enteros con margen de seguridad del 12-15%, centrados en (540, 960).
+      // caben enteros con margen de seguridad del 12%, centrados en (540, 960).
       if (s.exportFraming && !s.exportFraming.isTracking) {
         hdEffectiveScale = s.exportFraming.scale;
         panHDX = s.exportFraming.panX;
@@ -1627,7 +1642,7 @@ export default function App() {
           s.maxCircles,
           hdCanvas.width,
           hdCanvas.height,
-          0.125
+          0.12
         );
         hdEffectiveScale = smart.scale;
         panHDX = smart.panX;
@@ -1648,11 +1663,13 @@ export default function App() {
     hdCtx.save();
     hdCtx.translate(panHDX, panHDY);
     hdCtx.scale(hdEffectiveScale, hdEffectiveScale);
+    hdCtx.lineCap = 'round';
+    hdCtx.lineJoin = 'round';
 
     // Ejes guía HD
     hdCtx.beginPath();
     hdCtx.strokeStyle = isBurned ? 'rgba(140, 67, 10, 0.14)' : c.axis;
-    hdCtx.lineWidth = 1.5 / hdEffectiveScale;
+    hdCtx.lineWidth = 1.8 / hdEffectiveScale;
     hdCtx.moveTo(-100000, 0);
     hdCtx.lineTo(100000, 0);
     hdCtx.moveTo(0, -100000);
@@ -1684,53 +1701,53 @@ export default function App() {
       vy += freq * radius * Math.cos(angle);
       vRefSum += Math.abs(freq) * radius;
 
-      // Círculo armónico
+      // Círculo armónico ultra nítido HD
       hdCtx.beginPath();
       hdCtx.arc(prevx, prevy, radius, 0, Math.PI * 2);
       if (s.useCustomColors) {
-        hdCtx.shadowBlur = isNeon ? 18 : 0;
+        hdCtx.shadowBlur = isNeon ? 22 : 0;
         if (isNeon) hdCtx.shadowColor = circleCol;
         hdCtx.strokeStyle = circleCol;
-        hdCtx.lineWidth = Math.max((isNeon ? 1.2 : isInk ? 0.8 : 1.0) / hdEffectiveScale, 0.0001);
+        hdCtx.lineWidth = Math.max((isNeon ? 2.8 : isInk ? 1.8 : 2.4) / hdEffectiveScale, 0.0001);
       } else if (isBurned) {
         hdCtx.shadowBlur = 0;
-        hdCtx.strokeStyle = 'rgba(120, 80, 40, 0.18)';
-        hdCtx.lineWidth = Math.max(1.0 / hdEffectiveScale, 0.0001);
+        hdCtx.strokeStyle = 'rgba(120, 80, 40, 0.24)';
+        hdCtx.lineWidth = Math.max(2.4 / hdEffectiveScale, 0.0001);
       } else if (isNeon) {
-        hdCtx.shadowBlur = 18;
+        hdCtx.shadowBlur = 22;
         hdCtx.shadowColor = c.isDarkBase ? '#00f0ff' : '#0284c7';
         hdCtx.strokeStyle = c.isDarkBase ? '#38bdf8' : '#0284c7';
-        hdCtx.lineWidth = Math.max(1.2 / hdEffectiveScale, 0.0001);
+        hdCtx.lineWidth = Math.max(2.8 / hdEffectiveScale, 0.0001);
       } else if (isInk) {
         hdCtx.shadowBlur = 0;
-        hdCtx.strokeStyle = c.isDarkBase ? 'rgba(255, 255, 255, 0.16)' : 'rgba(15, 23, 42, 0.14)';
-        hdCtx.lineWidth = Math.max(0.8 / hdEffectiveScale, 0.0001);
+        hdCtx.strokeStyle = c.isDarkBase ? 'rgba(255, 255, 255, 0.22)' : 'rgba(15, 23, 42, 0.20)';
+        hdCtx.lineWidth = Math.max(1.8 / hdEffectiveScale, 0.0001);
       } else {
         hdCtx.shadowBlur = 0;
         hdCtx.strokeStyle = c.circle;
-        hdCtx.lineWidth = Math.max(1.2 / hdEffectiveScale, 0.0001);
+        hdCtx.lineWidth = Math.max(2.4 / hdEffectiveScale, 0.0001);
       }
       hdCtx.stroke();
 
-      // Radio
+      // Radio de transmisión
       hdCtx.beginPath();
       hdCtx.moveTo(prevx, prevy);
       hdCtx.lineTo(x, y);
       if (s.useCustomColors) {
         hdCtx.strokeStyle = circleCol;
-        hdCtx.lineWidth = Math.max(1.2 / hdEffectiveScale, 0.0001);
+        hdCtx.lineWidth = Math.max(2.4 / hdEffectiveScale, 0.0001);
       } else if (isBurned) {
-        hdCtx.strokeStyle = 'rgba(140, 67, 10, 0.32)';
-        hdCtx.lineWidth = Math.max(1.4 / hdEffectiveScale, 0.0001);
+        hdCtx.strokeStyle = 'rgba(140, 67, 10, 0.40)';
+        hdCtx.lineWidth = Math.max(2.8 / hdEffectiveScale, 0.0001);
       } else {
-        hdCtx.strokeStyle = isNeon ? '#38bdf8' : isInk ? (c.isDarkBase ? 'rgba(255, 255, 255, 0.25)' : 'rgba(15, 23, 42, 0.22)') : c.radius;
-        hdCtx.lineWidth = Math.max((isInk ? 0.9 : 1.5) / hdEffectiveScale, 0.0001);
+        hdCtx.strokeStyle = isNeon ? '#38bdf8' : isInk ? (c.isDarkBase ? 'rgba(255, 255, 255, 0.35)' : 'rgba(15, 23, 42, 0.30)') : c.radius;
+        hdCtx.lineWidth = Math.max((isInk ? 2.0 : 2.8) / hdEffectiveScale, 0.0001);
       }
       hdCtx.stroke();
 
       // Pivote
       hdCtx.beginPath();
-      hdCtx.arc(prevx, prevy, 3.5 / hdEffectiveScale, 0, Math.PI * 2);
+      hdCtx.arc(prevx, prevy, 5.0 / hdEffectiveScale, 0, Math.PI * 2);
       if (s.useCustomColors) {
         hdCtx.fillStyle = circleCol;
       } else if (isBurned) {
@@ -1751,44 +1768,65 @@ export default function App() {
     // HD ink stroke thickness (scaled for HD canvas ~1080p/1920p)
     const hdInkWidth = 3.2 + 13.6 / (1 + Math.pow(speedMag / v0, 1.3));
 
-    if (s.speed > 0 || s.hdPath.length === 0) {
-      s.hdPath.unshift({ x, y, width: hdInkWidth });
+    // Acumulación de trayectoria HD con integración temporal anti-facetado
+    if (s.isRecordingWallpaper) {
+      // Integración densa de sub-pasos temporales entre fotogramas para figuras complejas
+      const subSteps = 3;
+      const pTime = s.prevRecordTime !== undefined ? s.prevRecordTime : s.time;
+      const cTime = s.time;
+      for (let step = 1; step <= subSteps; step++) {
+        const subT = pTime + (cTime - pTime) * (step / subSteps);
+        let subX = 0;
+        let subY = 0;
+        for (let i = 0; i < total; i++) {
+          const comp = s.fourierFiltered[i];
+          const a = comp.freq * subT + comp.phase;
+          subX += comp.amp * Math.cos(a);
+          subY += comp.amp * Math.sin(a);
+        }
+        s.hdPath.unshift({ x: subX, y: subY, width: hdInkWidth });
+      }
+      s.prevRecordTime = cTime;
+    } else {
+      if (s.speed > 0 || s.hdPath.length === 0) {
+        s.hdPath.unshift({ x, y, width: hdInkWidth });
+      }
     }
 
     // Trazador final HD
     if (s.useCustomColors) {
       hdCtx.save();
       hdCtx.beginPath();
-      hdCtx.arc(x, y, (isNeon ? 9 : 7) / hdEffectiveScale, 0, Math.PI * 2);
-      hdCtx.shadowBlur = isNeon || isBurned ? 26 : 8;
+      hdCtx.arc(x, y, (isNeon ? 14 : 10) / hdEffectiveScale, 0, Math.PI * 2);
+      hdCtx.shadowBlur = isNeon || isBurned ? 30 : 12;
       hdCtx.shadowColor = trailCol;
       hdCtx.fillStyle = trailCol;
       hdCtx.fill();
       hdCtx.restore();
     } else if (isBurned) {
       hdCtx.save();
-      // Halo incandescente brasa viva
+      // Halo incandescente brasa viva exterior
       hdCtx.beginPath();
-      hdCtx.arc(x, y, 9 / hdEffectiveScale, 0, Math.PI * 2);
-      hdCtx.shadowBlur = 32;
+      hdCtx.arc(x, y, 16 / hdEffectiveScale, 0, Math.PI * 2);
+      hdCtx.shadowBlur = 38;
       hdCtx.shadowColor = '#ff3b00';
-      hdCtx.fillStyle = '#ff6200';
+      hdCtx.fillStyle = '#ff5500';
       hdCtx.fill();
 
-      // Núcleo caliente blanco-amarillento
+      // Núcleo caliente blanco-amarillento de alta temperatura
       hdCtx.beginPath();
-      hdCtx.arc(x, y, 4.8 / hdEffectiveScale, 0, Math.PI * 2);
-      hdCtx.shadowBlur = 14;
+      hdCtx.arc(x, y, 7.5 / hdEffectiveScale, 0, Math.PI * 2);
+      hdCtx.shadowBlur = 18;
       hdCtx.shadowColor = '#ffe600';
       hdCtx.fillStyle = '#fff9d6';
       hdCtx.fill();
       hdCtx.restore();
     } else {
       hdCtx.beginPath();
-      const tracerRadius = isNeon ? 9 : isInk ? (hdInkWidth * 0.75) : 7;
+      const tracerRadius = isNeon ? 14 : isInk ? (hdInkWidth * 0.75) : 10;
       hdCtx.arc(x, y, tracerRadius / hdEffectiveScale, 0, Math.PI * 2);
       if (isNeon) {
-        hdCtx.shadowBlur = 28;
+        hdCtx.shadowBlur = 32;
         hdCtx.shadowColor = '#ff0055';
         hdCtx.fillStyle = '#ffffff';
       } else if (isInk) {
@@ -1823,7 +1861,7 @@ export default function App() {
             const factor = 1 - i / maxPts;
             hbCtx.beginPath();
             hbCtx.strokeStyle = `hsla(${(s.time * 60 + i * 2) % 360}, 100%, 65%, ${factor})`;
-            hbCtx.lineWidth = Math.max((6 * factor) / hdEffectiveScale, 1 / hdEffectiveScale);
+            hbCtx.lineWidth = Math.max((7 * factor) / hdEffectiveScale, 1.2 / hdEffectiveScale);
             hbCtx.moveTo(s.hdPath[i].x, s.hdPath[i].y);
             hbCtx.lineTo(s.hdPath[i + 1].x, s.hdPath[i + 1].y);
             hbCtx.stroke();
@@ -1843,10 +1881,12 @@ export default function App() {
         } else {
           hbCtx.beginPath();
           hbCtx.strokeStyle = s.useCustomColors ? trailCol : (isNeon ? '#00f0ff' : c.trail);
-          hbCtx.lineWidth = 6 / hdEffectiveScale;
-          for (let i = 0; i < s.hdPath.length - 1; i++) {
-            hbCtx.moveTo(s.hdPath[i].x, s.hdPath[i].y);
-            hbCtx.lineTo(s.hdPath[i + 1].x, s.hdPath[i + 1].y);
+          hbCtx.lineWidth = 7 / hdEffectiveScale;
+          if (s.hdPath.length > 1) {
+            hbCtx.moveTo(s.hdPath[0].x, s.hdPath[0].y);
+            for (let i = 1; i < s.hdPath.length; i++) {
+              hbCtx.lineTo(s.hdPath[i].x, s.hdPath[i].y);
+            }
           }
           hbCtx.stroke();
         }
@@ -1869,30 +1909,32 @@ export default function App() {
     if (s.shadowMode && s.hdShadowPath.length > 1) {
       hdCtx.save();
       hdCtx.beginPath();
-      if (s.useCustomColors) {
-        hdCtx.strokeStyle = hexToRgba(trailCol, 0.35);
-        hdCtx.lineWidth = Math.max(3.2 / hdEffectiveScale, 0.8);
-      } else if (isBurned) {
-        hdCtx.strokeStyle = 'rgba(122, 62, 20, 0.45)';
-        hdCtx.lineWidth = Math.max(3.6 / hdEffectiveScale, 0.8);
-      } else {
-        hdCtx.strokeStyle = c.isDarkBase
-          ? 'rgba(148, 163, 184, 0.38)'
-          : 'rgba(99, 102, 241, 0.28)';
-        hdCtx.lineWidth = Math.max(3.0 / hdEffectiveScale, 0.8);
-      }
       hdCtx.lineCap = 'round';
       hdCtx.lineJoin = 'round';
+      if (s.useCustomColors) {
+        hdCtx.strokeStyle = hexToRgba(trailCol, 0.35);
+        hdCtx.lineWidth = Math.max(4.2 / hdEffectiveScale, 1.2);
+      } else if (isBurned) {
+        hdCtx.strokeStyle = 'rgba(122, 62, 20, 0.45)';
+        hdCtx.lineWidth = Math.max(4.5 / hdEffectiveScale, 1.2);
+      } else {
+        hdCtx.strokeStyle = c.isDarkBase
+          ? 'rgba(148, 163, 184, 0.42)'
+          : 'rgba(99, 102, 241, 0.32)';
+        hdCtx.lineWidth = Math.max(4.2 / hdEffectiveScale, 1.2);
+      }
       hdCtx.shadowBlur = 0;
-      for (let i = 0; i < s.hdShadowPath.length - 1; i++) {
-        hdCtx.moveTo(s.hdShadowPath[i].x, s.hdShadowPath[i].y);
-        hdCtx.lineTo(s.hdShadowPath[i + 1].x, s.hdShadowPath[i + 1].y);
+      if (s.hdShadowPath.length > 1) {
+        hdCtx.moveTo(s.hdShadowPath[0].x, s.hdShadowPath[0].y);
+        for (let i = 1; i < s.hdShadowPath.length; i++) {
+          hdCtx.lineTo(s.hdShadowPath[i].x, s.hdShadowPath[i].y);
+        }
       }
       hdCtx.stroke();
       hdCtx.restore();
     }
 
-    // Trayectoria continua HD
+    // Trayectoria continua HD con unión vectorial suave
     if (s.useCustomColors) {
       hdCtx.save();
       hdCtx.beginPath();
@@ -1900,49 +1942,57 @@ export default function App() {
       hdCtx.lineJoin = 'round';
       if (isBurned) {
         hdCtx.strokeStyle = trailCol;
-        hdCtx.shadowBlur = 18;
+        hdCtx.shadowBlur = 22;
         hdCtx.shadowColor = trailCol;
-        hdCtx.lineWidth = 6.4 / hdEffectiveScale;
+        hdCtx.lineWidth = 7.5 / hdEffectiveScale;
       } else if (isNeon) {
-        hdCtx.shadowBlur = 24;
+        hdCtx.shadowBlur = 26;
         hdCtx.shadowColor = trailCol;
         hdCtx.strokeStyle = trailCol;
-        hdCtx.lineWidth = 4 / hdEffectiveScale;
+        hdCtx.lineWidth = 5.6 / hdEffectiveScale;
       } else {
         hdCtx.shadowBlur = 0;
         hdCtx.strokeStyle = trailCol;
-        hdCtx.lineWidth = 4 / hdEffectiveScale;
+        hdCtx.lineWidth = 5.0 / hdEffectiveScale;
       }
-      for (let i = 0; i < s.hdPath.length - 1; i++) {
-        hdCtx.moveTo(s.hdPath[i].x, s.hdPath[i].y);
-        hdCtx.lineTo(s.hdPath[i + 1].x, s.hdPath[i + 1].y);
+      if (s.hdPath.length > 1) {
+        hdCtx.moveTo(s.hdPath[0].x, s.hdPath[0].y);
+        for (let i = 1; i < s.hdPath.length; i++) {
+          hdCtx.lineTo(s.hdPath[i].x, s.hdPath[i].y);
+        }
       }
       hdCtx.stroke();
       hdCtx.restore();
     } else if (isBurned) {
-      // Efecto Pirograbado HD: Capa 1 halo térmico ámbar tostado
+      // Efecto Pirograbado HD: Capa 1 halo térmico ámbar tostado continuo
       hdCtx.save();
       hdCtx.beginPath();
-      hdCtx.strokeStyle = 'rgba(140, 67, 10, 0.65)';
-      hdCtx.shadowBlur = 18;
-      hdCtx.shadowColor = 'rgba(160, 74, 14, 0.75)';
-      hdCtx.lineWidth = 8.8 / hdEffectiveScale;
+      hdCtx.strokeStyle = 'rgba(140, 67, 10, 0.70)';
+      hdCtx.shadowBlur = 28;
+      hdCtx.shadowColor = 'rgba(160, 74, 14, 0.85)';
+      hdCtx.lineWidth = 14.0 / hdEffectiveScale;
       hdCtx.lineCap = 'round';
       hdCtx.lineJoin = 'round';
-      for (let i = 0; i < s.hdPath.length - 1; i++) {
-        hdCtx.moveTo(s.hdPath[i].x, s.hdPath[i].y);
-        hdCtx.lineTo(s.hdPath[i + 1].x, s.hdPath[i + 1].y);
+      if (s.hdPath.length > 1) {
+        hdCtx.moveTo(s.hdPath[0].x, s.hdPath[0].y);
+        for (let i = 1; i < s.hdPath.length; i++) {
+          hdCtx.lineTo(s.hdPath[i].x, s.hdPath[i].y);
+        }
       }
       hdCtx.stroke();
 
-      // Capa 2: Surco profundo carbón chamuscado
+      // Capa 2: Surco profundo carbón chamuscado continuo
       hdCtx.beginPath();
       hdCtx.shadowBlur = 0;
       hdCtx.strokeStyle = '#2b1708';
-      hdCtx.lineWidth = 4.4 / hdEffectiveScale;
-      for (let i = 0; i < s.hdPath.length - 1; i++) {
-        hdCtx.moveTo(s.hdPath[i].x, s.hdPath[i].y);
-        hdCtx.lineTo(s.hdPath[i + 1].x, s.hdPath[i + 1].y);
+      hdCtx.lineWidth = 5.6 / hdEffectiveScale;
+      hdCtx.lineCap = 'round';
+      hdCtx.lineJoin = 'round';
+      if (s.hdPath.length > 1) {
+        hdCtx.moveTo(s.hdPath[0].x, s.hdPath[0].y);
+        for (let i = 1; i < s.hdPath.length; i++) {
+          hdCtx.lineTo(s.hdPath[i].x, s.hdPath[i].y);
+        }
       }
       hdCtx.stroke();
       hdCtx.restore();
@@ -1952,7 +2002,9 @@ export default function App() {
         const factor = 1 - i / maxPts;
         hdCtx.beginPath();
         hdCtx.strokeStyle = `hsla(${(s.time * 60 + i * 2) % 360}, 100%, 60%, ${factor * 0.95})`;
-        hdCtx.lineWidth = Math.max((4 * factor) / hdEffectiveScale, 0.5 / hdEffectiveScale);
+        hdCtx.lineWidth = Math.max((5.5 * factor) / hdEffectiveScale, 0.8 / hdEffectiveScale);
+        hdCtx.lineCap = 'round';
+        hdCtx.lineJoin = 'round';
         hdCtx.moveTo(s.hdPath[i].x, s.hdPath[i].y);
         hdCtx.lineTo(s.hdPath[i + 1].x, s.hdPath[i + 1].y);
         hdCtx.stroke();
@@ -1968,31 +2020,35 @@ export default function App() {
         const p2 = s.hdPath[i + 1];
         const segWidth = ((p1.width ?? 6) + (p2.width ?? 6)) / 2;
         hdCtx.beginPath();
-        hdCtx.lineWidth = segWidth / hdEffectiveScale;
+        hdCtx.lineWidth = (segWidth * 1.35) / hdEffectiveScale;
         hdCtx.moveTo(p1.x, p1.y);
         hdCtx.lineTo(p2.x, p2.y);
         hdCtx.stroke();
       }
     } else {
       hdCtx.beginPath();
+      hdCtx.lineCap = 'round';
+      hdCtx.lineJoin = 'round';
       if (s.shadowMode && s.hdShadowPath.length > 1) {
         hdCtx.shadowBlur = 24;
         hdCtx.shadowColor = c.isDarkBase ? '#00f5ff' : '#0284c7';
         hdCtx.strokeStyle = c.isDarkBase ? '#38bdf8' : '#0284c7';
-        hdCtx.lineWidth = 5.6 / hdEffectiveScale;
+        hdCtx.lineWidth = 6.0 / hdEffectiveScale;
       } else if (isNeon) {
-        hdCtx.shadowBlur = 18;
+        hdCtx.shadowBlur = 22;
         hdCtx.shadowColor = c.isDarkBase ? '#00f0ff' : '#0284c7';
         hdCtx.strokeStyle = c.isDarkBase ? '#38bdf8' : '#0284c7';
-        hdCtx.lineWidth = 4 / hdEffectiveScale;
+        hdCtx.lineWidth = 5.6 / hdEffectiveScale;
       } else {
         hdCtx.shadowBlur = 0;
         hdCtx.strokeStyle = c.trail;
-        hdCtx.lineWidth = 4 / hdEffectiveScale;
+        hdCtx.lineWidth = 5.0 / hdEffectiveScale;
       }
-      for (let i = 0; i < s.hdPath.length - 1; i++) {
-        hdCtx.moveTo(s.hdPath[i].x, s.hdPath[i].y);
-        hdCtx.lineTo(s.hdPath[i + 1].x, s.hdPath[i + 1].y);
+      if (s.hdPath.length > 1) {
+        hdCtx.moveTo(s.hdPath[0].x, s.hdPath[0].y);
+        for (let i = 1; i < s.hdPath.length; i++) {
+          hdCtx.lineTo(s.hdPath[i].x, s.hdPath[i].y);
+        }
       }
       hdCtx.stroke();
     }
@@ -2032,10 +2088,13 @@ export default function App() {
 
     const stream = (hdCanvas as HTMLCanvasElement).captureStream(60);
     const codecs = [
+      'video/mp4;codecs=avc1.640028',
       'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
       'video/mp4',
       'video/webm;codecs=vp9',
+      'video/webm;codecs=vp09.00.10.08',
       'video/webm;codecs=h264',
+      'video/webm;codecs=vp8',
       'video/webm',
     ];
 
@@ -2047,16 +2106,22 @@ export default function App() {
       }
     }
 
-    const recorderOptions = {
-      mimeType: mime,
-      videoBitsPerSecond: 8000000,
+    const recorderOptions: MediaRecorderOptions = {
+      videoBitsPerSecond: 18000000, // 18 Mbps para nitidez absoluta sin artefactos de compresión
     };
+    if (mime) {
+      recorderOptions.mimeType = mime;
+    }
 
     let recorder: MediaRecorder;
     try {
       recorder = new MediaRecorder(stream, recorderOptions);
     } catch {
-      recorder = new MediaRecorder(stream);
+      try {
+        recorder = new MediaRecorder(stream, { videoBitsPerSecond: 18000000 });
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
     }
 
     s.recordedChunks = [];
@@ -2092,21 +2157,28 @@ export default function App() {
       alert(`¡Video HD (${exportAspect}) descargado con sincronización de bucle perfecta!`);
     };
 
-    // Configuración de encuadre inteligente según el estado actual de la pantalla
+    // Sincronización idéntica y estricta de armónicos y estado matemático de pantalla
+    s.maxCircles = maxCircles;
     const canvas = canvasRef.current;
     const scrW = canvas ? canvas.width : 400;
     const scrH = canvas ? canvas.height : 400;
 
+    // Cantidad uniforme de fotogramas del bucle según complejidad (720 a 1,200 fotogramas)
+    // para integración temporal suave y eliminación total del facetado poligonal
+    const recFrames = Math.max(720, Math.min(1200, s.maxCircles >= 60 ? 1200 : 720));
+    s.recTotalFrames = recFrames;
+    s.prevRecordTime = 0;
+
     if (!s.isTracking) {
       // Caso A: Modo Vista General / Centrado Completo
       // Calcula la caja delimitadora que abarca la trayectoria y la amplitud máxima de los círculos
-      // con margen de seguridad del 12.5% y centra el punto medio exactamente en (hdCanvas.width/2, hdCanvas.height/2)
+      // con margen de seguridad del 12% y centra el punto medio exactamente en (hdCanvas.width/2, hdCanvas.height/2)
       const smartFraming = computeSmartExportFraming(
         s.fourierFiltered,
         s.maxCircles,
         hdCanvas.width,
         hdCanvas.height,
-        0.125
+        0.12
       );
       s.exportFraming = {
         isTracking: false,
@@ -2128,11 +2200,11 @@ export default function App() {
     }
 
     // Modo Sombra: Pre-calcular la huella fantasma completa si está activado
-    // para que la memoria estática sea visible desde el cuadro inicial
+    // con alta densidad angular para reproducir fielmente curvas complejas desde el inicio
     if (s.shadowMode && s.fourierFiltered.length > 0) {
       const ghostPts: Point[] = [];
       const total = Math.min(s.fourierFiltered.length, s.maxCircles);
-      const ghostSteps = 360;
+      const ghostSteps = Math.max(720, Math.min(1800, total * 2));
       for (let st = 0; st <= ghostSteps; st++) {
         const tVal = (st * 2 * Math.PI) / ghostSteps;
         let px = 0;
@@ -2152,6 +2224,7 @@ export default function App() {
 
     // Reset exactly to t = 0 for perfect loop
     s.time = 0;
+    s.prevRecordTime = 0;
     s.path = [];
     s.hdPath = [];
     s.isRecordingWallpaper = true;
@@ -2160,7 +2233,7 @@ export default function App() {
     setRecordProgress(0);
 
     recorder.start();
-  }, [exportAspect]);
+  }, [exportAspect, maxCircles]);
 
   const getCoords = (
     e: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent
@@ -2772,9 +2845,11 @@ export default function App() {
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
           ctx.shadowBlur = 0;
-          for (let i = 0; i < s.shadowPath.length - 1; i++) {
-            ctx.moveTo(s.shadowPath[i].x, s.shadowPath[i].y);
-            ctx.lineTo(s.shadowPath[i + 1].x, s.shadowPath[i + 1].y);
+          if (s.shadowPath.length > 1) {
+            ctx.moveTo(s.shadowPath[0].x, s.shadowPath[0].y);
+            for (let i = 1; i < s.shadowPath.length; i++) {
+              ctx.lineTo(s.shadowPath[i].x, s.shadowPath[i].y);
+            }
           }
           ctx.stroke();
           ctx.restore();
@@ -2801,9 +2876,11 @@ export default function App() {
             ctx.strokeStyle = trailCol;
             ctx.lineWidth = 2.5 / s.scale;
           }
-          for (let i = 0; i < s.path.length - 1; i++) {
-            ctx.moveTo(s.path[i].x, s.path[i].y);
-            ctx.lineTo(s.path[i + 1].x, s.path[i + 1].y);
+          if (s.path.length > 1) {
+            ctx.moveTo(s.path[0].x, s.path[0].y);
+            for (let i = 1; i < s.path.length; i++) {
+              ctx.lineTo(s.path[i].x, s.path[i].y);
+            }
           }
           ctx.stroke();
           ctx.restore();
@@ -2818,9 +2895,11 @@ export default function App() {
           ctx.lineWidth = 5.2 / s.scale;
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
-          for (let i = 0; i < s.path.length - 1; i++) {
-            ctx.moveTo(s.path[i].x, s.path[i].y);
-            ctx.lineTo(s.path[i + 1].x, s.path[i + 1].y);
+          if (s.path.length > 1) {
+            ctx.moveTo(s.path[0].x, s.path[0].y);
+            for (let i = 1; i < s.path.length; i++) {
+              ctx.lineTo(s.path[i].x, s.path[i].y);
+            }
           }
           ctx.stroke();
 
@@ -2829,9 +2908,13 @@ export default function App() {
           ctx.shadowBlur = 0;
           ctx.strokeStyle = '#2b1708';
           ctx.lineWidth = 2.6 / s.scale;
-          for (let i = 0; i < s.path.length - 1; i++) {
-            ctx.moveTo(s.path[i].x, s.path[i].y);
-            ctx.lineTo(s.path[i + 1].x, s.path[i + 1].y);
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          if (s.path.length > 1) {
+            ctx.moveTo(s.path[0].x, s.path[0].y);
+            for (let i = 1; i < s.path.length; i++) {
+              ctx.lineTo(s.path[i].x, s.path[i].y);
+            }
           }
           ctx.stroke();
           ctx.restore();
@@ -2842,6 +2925,8 @@ export default function App() {
             ctx.beginPath();
             ctx.strokeStyle = `hsla(${(s.time * 60 + i * 2) % 360}, 100%, 60%, ${factor * 0.95})`;
             ctx.lineWidth = Math.max((2.5 * factor) / s.scale, 0.4 / s.scale);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
             ctx.moveTo(s.path[i].x, s.path[i].y);
             ctx.lineTo(s.path[i + 1].x, s.path[i + 1].y);
             ctx.stroke();
@@ -2865,6 +2950,8 @@ export default function App() {
           }
         } else {
           ctx.beginPath();
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
           if (s.shadowMode && s.shadowPath.length > 1) {
             ctx.shadowBlur = 18;
             ctx.shadowColor = c.isDarkBase ? '#00f5ff' : '#0284c7';
@@ -2880,9 +2967,11 @@ export default function App() {
             ctx.strokeStyle = trailCol;
             ctx.lineWidth = 2.5 / s.scale;
           }
-          for (let i = 0; i < s.path.length - 1; i++) {
-            ctx.moveTo(s.path[i].x, s.path[i].y);
-            ctx.lineTo(s.path[i + 1].x, s.path[i + 1].y);
+          if (s.path.length > 1) {
+            ctx.moveTo(s.path[0].x, s.path[0].y);
+            for (let i = 1; i < s.path.length; i++) {
+              ctx.lineTo(s.path[i].x, s.path[i].y);
+            }
           }
           ctx.stroke();
         }
@@ -2893,9 +2982,10 @@ export default function App() {
         }
 
         if (s.speed > 0 || s.isRecordingWallpaper) {
-          // Bucle exacto a 60 FPS: 360 cuadros por ciclo completo (2π)
+          // Tasa de avance angular uniforme sincronizada con los fotogramas del video (720 a 1,200 fotogramas)
+          const totalFrames = s.recTotalFrames || 1200;
           const dt = s.isRecordingWallpaper
-            ? (2 * Math.PI) / 360
+            ? (2 * Math.PI) / totalFrames
             : ((2 * Math.PI) / 300) * s.speed;
           s.time += dt;
 
